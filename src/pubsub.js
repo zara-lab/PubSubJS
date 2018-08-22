@@ -1,10 +1,9 @@
-/**
- * Copyright (c) 2010,2011,2012,2013,2014 Morgan Roderick http://roderick.dk
- * License: MIT - http://mrgnrdrck.mit-license.org
- *
- * https://github.com/mroderick/PubSubJS
- */
+/*
+Copyright (c) 2010,2011,2012,2013,2014 Morgan Roderick http://roderick.dk
+License: MIT - http://mrgnrdrck.mit-license.org
 
+https://github.com/mroderick/PubSubJS
+*/
 (function (root, factory){
     'use strict';
 
@@ -31,6 +30,25 @@
 }(( typeof window === 'object' && window ) || this, function (PubSub){
     'use strict';
 
+    var clientId = Math.random();
+    var mqttOptions = {
+        keepalive: 10,
+        clientId: clientId,
+        protocolId: 'MQTT',
+        protocolVersion: 4,
+        clean: true,
+        // reconnectPeriod: 1000,
+        // connectTimeout: 30 * 1000,
+        // will: {
+        //     topic: 'WillMsg',
+        //     payload: 'Connection Closed abnormally..!',
+        //     qos: 0,
+        //     retain: false
+        // },
+        // rejectUnauthorized: false
+    }
+    var client;
+
     var messages = {},
         lastUid = -1;
 
@@ -46,11 +64,9 @@
     }
 
     /**
-     * Returns a function that throws the passed exception, for use as argument for setTimeout
-     * @alias throwException
-     * @function
-     * @param { Object } ex An Error object
-     */
+	 *	Returns a function that throws the passed exception, for use as argument for setTimeout
+	 *	@param { Object } ex An Error object
+	 */
     function throwException( ex ){
         return function reThrowException(){
             throw ex;
@@ -132,43 +148,69 @@
         return true;
     }
 
-    /**
-     * Publishes the message, passing the data to it's subscribers
-     * @function
-     * @alias publish
-     * @param { String } message The message to publish
-     * @param {} data The data to pass to subscribers
-     * @return { Boolean }
-     */
-    PubSub.publish = function( message, data ){
-        return publish( message, data, false, PubSub.immediateExceptions );
+    PubSub.connect = function( host, username, password, connected, offline, error){
+
+        mqttOptions.username = username;
+        mqttOptions.password = password;
+
+        client = mqtt.connect(host, mqttOptions)
+    
+        client.on("message", function (topic, payload) {
+            PubSub.publish(topic, JSON.parse(payload), true);
+        })
+        if(connected)
+            client.on("connect", function () {
+                connected();
+            });
+        if(offline)
+            client.on("offline", function () {
+                offline();
+            });
+        if(error){
+            client.on("error", function (err) {
+                error({
+                    code: err.code,
+                    message: err.message
+                });
+            });
+        }
+        return client;
     };
 
     /**
-     * Publishes the the message synchronously, passing the data to it's subscribers
-     * @function
-     * @alias publishSync
-     * @param { String } message The message to publish
-     * @param {} data The data to pass to subscribers
-     * @return { Boolean }
-     */
+	 *	PubSub.publish( message[, data] ) -> Boolean
+	 *	- message (String): The message to publish
+	 *	- data: The data to pass to subscribers
+	 *	Publishes the the message, passing the data to it's subscribers
+	**/
+    PubSub.publish = function( message, data, local ){
+        if(local)
+            return publish( message, data, false, PubSub.immediateExceptions );
+        else
+            client.publish(message, data);
+    };
+
+    /**
+	 *	PubSub.publishSync( message[, data] ) -> Boolean
+	 *	- message (String): The message to publish
+	 *	- data: The data to pass to subscribers
+	 *	Publishes the the message synchronously, passing the data to it's subscribers
+	**/
     PubSub.publishSync = function( message, data ){
         return publish( message, data, true, PubSub.immediateExceptions );
     };
 
     /**
-     * Subscribes the passed function to the passed message. Every returned token is unique and should be stored if you need to unsubscribe
-     * @function
-     * @alias subscribe
-     * @param { String } message The message to subscribe to
-     * @param { Function } func The function to call when a new message is published
-     * @return { String }
-     */
+	 *	PubSub.subscribe( message, func ) -> String
+	 *	- message (String): The message to subscribe to
+	 *	- func (Function): The function to call when a new message is published
+	 *	Subscribes the passed function to the passed message. Every returned token is unique and should be stored if
+	 *	you need to unsubscribe
+	**/
     PubSub.subscribe = function( message, func ){
         if ( typeof func !== 'function'){
             return false;
         }
-
         // message is not registered yet
         if ( !messages.hasOwnProperty( message ) ){
             messages[message] = {};
@@ -178,19 +220,19 @@
         // and allow for easy use as key names for the 'messages' object
         var token = 'uid_' + String(++lastUid);
         messages[message][token] = func;
+        
+        client.subscribe(message);
 
         // return token for unsubscribing
         return token;
     };
 
     /**
-     * Subscribes the passed function to the passed message once
-     * @function
-     * @alias subscribeOnce
-     * @param { String } message The message to subscribe to
-     * @param { Function } func The function to call when a new message is published
-     * @return { PubSub }
-     */
+	 *	PubSub.subscribeOnce( message, func ) -> PubSub
+	 *	- message (String): The message to subscribe to
+	 *	- func (Function): The function to call when a new message is published
+	 *	Subscribes the passed function to the passed message once
+	**/
     PubSub.subscribeOnce = function( message, func ){
         var token = PubSub.subscribe( message, function(){
             // before func apply, unsubscribe message
@@ -200,22 +242,14 @@
         return PubSub;
     };
 
-    /**
-     * Clears all subscriptions
-     * @function
-     * @public
-     * @alias clearAllSubscriptions
-     */
+    /* Public: Clears all subscriptions
+	 */
     PubSub.clearAllSubscriptions = function clearAllSubscriptions(){
         messages = {};
     };
 
-    /**
-     * Clear subscriptions by the topic
-     * @function
-     * @public
-     * @alias clearAllSubscriptions
-     */
+    /*Public: Clear subscriptions by the topic
+	*/
     PubSub.clearSubscriptions = function clearSubscriptions(topic){
         var m;
         for (m in messages){
@@ -225,26 +259,25 @@
         }
     };
 
-    /**
-     * Removes subscriptions
-     *
-     * - When passed a token, removes a specific subscription.
-     *
-	 * - When passed a function, removes all subscriptions for that function
-     *
-	 * - When passed a topic, removes all subscriptions for that topic (hierarchy)
-     * @function
-     * @public
-     * @alias subscribeOnce
-     * @param { String | Function } value A token, function or topic to unsubscribe from
-     * @example // Unsubscribing with a token
-     * var token = PubSub.subscribe('mytopic', myFunc);
-     * PubSub.unsubscribe(token);
-     * @example // Unsubscribing with a function
-     * PubSub.unsubscribe(myFunc);
-     * @example // Unsubscribing from a topic
-     * PubSub.unsubscribe('mytopic');
-     */
+    /* Public: removes subscriptions.
+	 * When passed a token, removes a specific subscription.
+	 * When passed a function, removes all subscriptions for that function
+	 * When passed a topic, removes all subscriptions for that topic (hierarchy)
+	 *
+	 * value - A token, function or topic to unsubscribe.
+	 *
+	 * Examples
+	 *
+	 *		// Example 1 - unsubscribing with a token
+	 *		var token = PubSub.subscribe('mytopic', myFunc);
+	 *		PubSub.unsubscribe(token);
+	 *
+	 *		// Example 2 - unsubscribing with a function
+	 *		PubSub.unsubscribe(myFunc);
+	 *
+	 *		// Example 3 - unsubscribing a topic
+	 *		PubSub.unsubscribe('mytopic');
+	 */
     PubSub.unsubscribe = function(value){
         var descendantTopicExists = function(topic) {
                 var m;
@@ -265,31 +298,40 @@
 
         if (isTopic){
             PubSub.clearSubscriptions(value);
-            return;
+            result = true;
+
+            var hasSubscribers = messageHasSubscribers( message );
+            if(!hasSubscribers){
+                client.unsubscribe(value);
+            }
         }
-
-        for ( m in messages ){
-            if ( messages.hasOwnProperty( m ) ){
-                message = messages[m];
-
-                if ( isToken && message[value] ){
-                    delete message[value];
-                    result = value;
-                    // tokens are unique, so we can just stop here
-                    break;
-                }
-
-                if (isFunction) {
-                    for ( t in message ){
-                        if (message.hasOwnProperty(t) && message[t] === value){
-                            delete message[t];
-                            result = true;
+        else{
+            for ( m in messages ){
+                if ( messages.hasOwnProperty( m ) ){
+                    message = messages[m];
+    
+                    if ( isToken && message[value] ){
+                        delete message[value];
+                        result = value;
+                        // tokens are unique, so we can just stop here
+                        break;
+                    }
+    
+                    if (isFunction) {
+                        for ( t in message ){
+                            if (message.hasOwnProperty(t) && message[t] === value){
+                                delete message[t];
+                                result = true;
+                            }
                         }
                     }
                 }
             }
+            var hasSubscribers = messageHasSubscribers( message );
+            if(!hasSubscribers && result === true){
+                client.unsubscribe(m);
+            }
         }
-
         return result;
     };
 }));
